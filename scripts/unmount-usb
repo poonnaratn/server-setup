@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 1 && $1 == /mnt/* ]] || {
+  printf 'Usage: %s /mnt/usb-...\n' "${0##*/}" >&2
+  exit 64
+}
+
+sudo umount "$1"
+printf 'Unmounted %s. It is now safe to unplug the drive.\n' "$1"

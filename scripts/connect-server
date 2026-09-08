@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Connect to the configured Fedora server through Tailscale or the internet.
+set -euo pipefail
+
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+config_file="$repo_dir/config/server.env"
+
+usage() {
+  printf 'Usage: %s <tailscale|internet>\n' "${0##*/}" >&2
+  exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+[[ -r "$config_file" ]] || {
+  printf 'Missing %s. Copy config/server.env.example first.\n' "$config_file" >&2
+  exit 66
+}
+
+# shellcheck disable=SC1090
+source "$config_file"
+
+case "$1" in
+  tailscale) host=${SERVER_TAILSCALE_HOST:-} ;;
+  internet) host=${SERVER_PUBLIC_HOST:-} ;;
+  *) usage ;;
+esac
+
+[[ -n ${SERVER_USER:-} ]] || { printf 'SERVER_USER is not set.\n' >&2; exit 65; }
+[[ -n $host ]] || { printf 'No host is configured for %s.\n' "$1" >&2; exit 65; }
+
+ssh_args=(-p "${SERVER_SSH_PORT:-22}")
+if [[ -n ${SERVER_SSH_KEY:-} ]]; then
+  [[ -r $SERVER_SSH_KEY ]] || { printf 'SSH key cannot be read: %s\n' "$SERVER_SSH_KEY" >&2; exit 66; }
+  ssh_args+=(-i "$SERVER_SSH_KEY")
+fi
+
+printf 'Connecting to %s as %s via %s...\n' "$host" "$SERVER_USER" "$1" >&2
+exec ssh "${ssh_args[@]}" "${SERVER_USER}@${host}"

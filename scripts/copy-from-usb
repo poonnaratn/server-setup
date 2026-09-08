@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Copy a chosen file from a mounted USB drive with owner-only destination access.
+set -euo pipefail
+
+[[ $# -eq 2 ]] || {
+  printf 'Usage: %s /mnt/usb-.../source-file destination-file\n' "${0##*/}" >&2
+  exit 64
+}
+
+source_file=$1
+destination=${2/#\~/$HOME}
+[[ $source_file == /mnt/* && -f $source_file ]] || {
+  printf 'Source must be a regular file below /mnt: %s\n' "$source_file" >&2
+  exit 66
+}
+
+destination_dir=$(dirname "$destination")
+mkdir -p "$destination_dir"
+umask 077
+install -m 600 "$source_file" "$destination"
+printf 'Copied %s to %s with mode 600.\n' "$source_file" "$destination"

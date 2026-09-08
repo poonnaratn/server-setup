@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Mount one explicitly chosen removable partition on a Fedora server.
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --list | %s /dev/<partition> [mount-directory]\n' "${0##*/}" "${0##*/}" >&2
+  exit 64
+}
+
+if [[ ${1:-} == --list ]]; then
+  [[ $# -eq 1 ]] || usage
+  lsblk -o NAME,PATH,SIZE,RM,TRAN,FSTYPE,LABEL,MOUNTPOINTS
+  exit 0
+fi
+
+[[ $# -ge 1 && $# -le 2 ]] || usage
+device=$1
+[[ $device == /dev/* && -b $device ]] || { printf 'Not a block device: %s\n' "$device" >&2; exit 66; }
+
+# A partition inherits its removable flag from its parent disk.
+parent=$(lsblk -no PKNAME "$device" | head -n 1)
+check_device=${parent:+/dev/$parent}
+check_device=${check_device:-$device}
+removable=$(lsblk -ndo RM "$check_device" | head -n 1)
+[[ $removable == 1 ]] || {
+  printf 'Refusing %s: it is not reported as a removable USB device.\n' "$device" >&2
+  exit 77
+}
+
+mountpoint=$(lsblk -no MOUNTPOINTS "$device" | head -n 1)
+[[ -z $mountpoint ]] || { printf '%s is already mounted at %s.\n' "$device" "$mountpoint" >&2; exit 73; }
+
+target=${2:-/mnt/usb-$(basename "$device")}
+[[ $target == /mnt/* ]] || { printf 'Mount directory must be below /mnt: %s\n' "$target" >&2; exit 64; }
+
+sudo mkdir -p "$target"
+sudo mount -o nosuid,nodev,noexec "$device" "$target"
+printf 'Mounted %s at %s\n' "$device" "$target"
+printf 'Copy a credential with: ./scripts/copy-from-usb %s/<file> ~/.ssh/<file>\n' "$target"

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Run the USB helpers on the configured Fedora server over SSH.
+set -euo pipefail
+
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+config_file="$repo_dir/config/server.env"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  server-usb <tailscale|internet> list
+  server-usb <tailscale|internet> mount /dev/<partition> [mount-directory]
+  server-usb <tailscale|internet> copy /mnt/usb-.../source-file destination-file
+  server-usb <tailscale|internet> unmount /mnt/usb-...
+EOF
+  exit 64
+}
+
+[[ $# -ge 2 ]] || usage
+route=$1
+action=$2
+shift 2
+
+[[ -r "$config_file" ]] || {
+  printf 'Missing %s. Copy config/server.env.example first.\n' "$config_file" >&2
+  exit 66
+}
+# shellcheck disable=SC1090
+source "$config_file"
+
+case "$route" in
+  tailscale) host=${SERVER_TAILSCALE_HOST:-} ;;
+  internet) host=${SERVER_PUBLIC_HOST:-} ;;
+  *) usage ;;
+esac
+[[ -n ${SERVER_USER:-} && -n $host ]] || { printf 'The selected SSH route is not configured.\n' >&2; exit 65; }
+
+case "$action" in
+  list) script="$repo_dir/scripts/mount-usb"; [[ $# -eq 0 ]] || usage; arguments=(--list) ;;
+  mount) script="$repo_dir/scripts/mount-usb"; [[ $# -ge 1 && $# -le 2 ]] || usage; arguments=("$@") ;;
+  copy) script="$repo_dir/scripts/copy-from-usb"; [[ $# -eq 2 ]] || usage; arguments=("$@") ;;
+  unmount) script="$repo_dir/scripts/unmount-usb"; [[ $# -eq 1 ]] || usage; arguments=("$@") ;;
+  *) usage ;;
+esac
+
+ssh_args=(-tt -p "${SERVER_SSH_PORT:-22}")
+if [[ -n ${SERVER_SSH_KEY:-} ]]; then
+  [[ -r $SERVER_SSH_KEY ]] || { printf 'SSH key cannot be read: %s\n' "$SERVER_SSH_KEY" >&2; exit 66; }
+  ssh_args+=(-i "$SERVER_SSH_KEY")
+fi
+
+# Send the selected helper as base64 so SSH stdin stays attached to the local
+# terminal. This lets sudo read its password on the remote PTY.
+encoded_script=$(base64 < "$script" | tr -d '\n')
+printf -v quoted_script '%q' "$encoded_script"
+remote_command="printf %s $quoted_script | base64 --decode | bash -s --"
+
+# %q produces shell-safe arguments for bash, which Fedora uses by default.
+for argument in "${arguments[@]}"; do
+  printf -v escaped_argument ' %q' "$argument"
+  remote_command+=$escaped_argument
+done
+
+exec ssh "${ssh_args[@]}" "${SERVER_USER}@${host}" "$remote_command"

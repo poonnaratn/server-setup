@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Enable Fedora Cockpit and show the local-network and Tailscale URLs.
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s [--allow-network]\n' "${0##*/}" >&2
+  exit 64
+}
+
+allow_network=false
+case ${1:-} in
+  '') ;;
+  --allow-network) allow_network=true ;;
+  *) usage ;;
+esac
+
+if ! systemctl list-unit-files cockpit.socket --no-legend 2>/dev/null | grep -q '^cockpit\.socket'; then
+  printf 'Cockpit is not installed. On Fedora, install it with:\n  sudo dnf install cockpit\n' >&2
+  exit 69
+fi
+
+sudo systemctl enable --now cockpit.socket
+printf 'Cockpit is running.\n'
+
+if "$allow_network"; then
+  if ! command -v firewall-cmd >/dev/null; then
+    printf 'firewall-cmd is unavailable; Cockpit was started, but no firewall rule was changed.\n' >&2
+  else
+    sudo firewall-cmd --permanent --add-service=cockpit
+    sudo firewall-cmd --reload
+    printf 'Fedora firewall now allows Cockpit (HTTPS port 9090).\n'
+  fi
+else
+  printf 'Firewall unchanged. Re-run with --allow-network to access Cockpit from another device.\n'
+fi
+
+printf '\nOpen Cockpit in a browser:\n'
+while IFS= read -r address; do
+  [[ -n $address ]] && printf '  LAN:       https://%s:9090\n' "$address"
+done < <(ip -4 -o addr show scope global | awk '{split($4, address, "/"); print address[1]}' | grep -v '^100\.' || true)
+
+if command -v tailscale >/dev/null && tailscale_ip=$(tailscale ip -4 2>/dev/null); then
+  printf '  Tailscale: https://%s:9090\n' "$tailscale_ip"
+else
+  printf '  Tailscale: unavailable (install and connect Tailscale first)\n'
+fi
+
+printf '\nDo not forward port 9090 from your router to the internet.\n'

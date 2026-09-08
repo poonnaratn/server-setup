@@ -1,0 +1,3 @@
+# Local connection settings and any credentials copied during setup
+config/server.env
+credentials/
