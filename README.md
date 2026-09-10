@@ -144,3 +144,38 @@ restore Fedora's normal lid behavior later, run:
 The script restarts `systemd-logind` after a change so the setting applies
 immediately. Save work before running it, and do not run the `enable` command
 if you depend on lid close as your normal suspend control.
+
+## 6. Set up hardened SSH access
+
+Create a dedicated SSH key **on the computer from which you will connect**.
+Never copy its private-key file to the server or commit it to this repository:
+
+```sh
+./scripts/create-ssh-key
+```
+
+Copy the public-key line the command prints. On the Fedora server, run the
+following as the normal server account, paste that public-key line, and press
+Enter when prompted:
+
+```sh
+./scripts/setup-ssh-server
+```
+
+The script installs OpenSSH, enables it, installs the verified public key, and
+then disables root and password logins. If `firewalld` is active, it permits
+SSH from the Tailscale `100.64.0.0/10` address range without opening SSH to the
+public internet.
+
+Before closing the current server terminal, test a new connection from the
+computer holding the private key:
+
+```sh
+ssh -i ~/.ssh/fedora-server_ed25519 your-server-user@your-server-tailnet.ts.net
+```
+
+After that succeeds, add the private-key path and MagicDNS name to
+`config/server.env` on your computer and use `./scripts/connect-server
+tailscale` as normal. If you deliberately need a temporary password fallback,
+run `./scripts/setup-ssh-server --allow-password-login`; use key-only access
+again once you no longer need it.

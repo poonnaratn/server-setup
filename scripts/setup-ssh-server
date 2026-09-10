@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Install and harden OpenSSH on Fedora after a public key has been verified.
+set -euo pipefail
+
+config_dir=/etc/ssh/sshd_config.d
+config_file="$config_dir/90-server-setup.conf"
+key_file=
+allow_password=false
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: setup-ssh-server [--key-file public-key-file] [--allow-password-login]
+
+Installs OpenSSH, adds one public key to the current user's authorized_keys,
+then enables SSH key authentication. Password and root logins are disabled by
+default. With no --key-file, paste one public-key line when prompted.
+
+Use --allow-password-login only when a password-login fallback is required.
+EOF
+  exit 64
+}
+
+[[ $(id -u) -ne 0 ]] || {
+  printf 'Run this as the regular server user, not as root.\n' >&2
+  exit 77
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --key-file)
+      [[ $# -ge 2 ]] || usage
+      key_file=$2
+      shift 2
+      ;;
+    --allow-password-login)
+      allow_password=true
+      shift
+      ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+if [[ -n $key_file ]]; then
+  [[ -r $key_file && -f $key_file ]] || {
+    printf 'Public-key file cannot be read: %s\n' "$key_file" >&2
+    exit 66
+  }
+else
+  key_file=$(mktemp)
+  trap 'rm -f "$key_file"' EXIT
+  printf 'Paste the public SSH key, then press Enter:\n' >&2
+  IFS= read -r public_key
+  printf '%s\n' "$public_key" > "$key_file"
+fi
+
+command -v ssh-keygen >/dev/null || {
+  printf 'ssh-keygen is required to verify the public key.\n' >&2
+  exit 69
+}
+ssh-keygen -lf "$key_file" >/dev/null || {
+  printf 'The supplied file is not a valid SSH public key.\n' >&2
+  exit 65
+}
+
+sudo -v
+sudo dnf install -y openssh-server openssh-clients
+
+home_dir=$(getent passwd "$(id -un)" | cut -d: -f6)
+[[ -n $home_dir ]] || { printf 'Cannot find the current user home directory.\n' >&2; exit 69; }
+authorized_keys="$home_dir/.ssh/authorized_keys"
+
+install -d -m 700 "$home_dir/.ssh"
+touch "$authorized_keys"
+chmod 600 "$authorized_keys"
+if ! grep -qxF -f "$key_file" "$authorized_keys"; then
+  cat "$key_file" >> "$authorized_keys"
+fi
+
+if "$allow_password"; then
+  password_auth=yes
+else
+  password_auth=no
+fi
+
+sudo install -d -m 755 "$config_dir"
+sudo tee "$config_file" >/dev/null <<EOF
+# Managed by scripts/setup-ssh-server.
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication $password_auth
+KbdInteractiveAuthentication no
+MaxAuthTries 3
+EOF
+
+sudo sshd -t
+sudo systemctl enable --now sshd
+
+# Permit SSH only from Tailscale's CGNAT address range when firewalld is active.
+if command -v firewall-cmd >/dev/null && sudo firewall-cmd --state >/dev/null 2>&1; then
+  sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="100.64.0.0/10" service name="ssh" accept' >/dev/null
+  sudo firewall-cmd --reload >/dev/null
+  printf 'Firewalld permits SSH from Tailscale addresses.\n'
+fi
+
+printf 'OpenSSH is running and the public key was installed for %s.\n' "$(id -un)"
+if "$allow_password"; then
+  printf 'Password login remains enabled by request.\n'
+else
+  printf 'Password and root logins are disabled. Test a second SSH session before closing this one.\n'
+fi

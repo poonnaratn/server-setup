@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Create a dedicated SSH key on the computer that will connect to the server.
+set -euo pipefail
+
+key_file=${1:-"$HOME/.ssh/fedora-server_ed25519"}
+
+[[ ${1:-} != -h && ${1:-} != --help ]] || {
+  printf 'Usage: %s [private-key-path]\n' "${0##*/}"
+  exit 0
+}
+
+command -v ssh-keygen >/dev/null || {
+  printf 'ssh-keygen is required to create an SSH key.\n' >&2
+  exit 69
+}
+
+[[ ! -e $key_file && ! -e $key_file.pub ]] || {
+  printf 'Refusing to overwrite an existing key: %s\n' "$key_file" >&2
+  exit 73
+}
+
+mkdir -p "$(dirname "$key_file")"
+ssh-keygen -t ed25519 -a 64 -f "$key_file" -C "$(id -un)@$(hostname)-fedora-server"
+chmod 600 "$key_file"
+
+printf '\nPrivate key: %s\nPublic key:  %s.pub\n' "$key_file" "$key_file"
+printf 'Copy the public-key line below and paste it into setup-ssh-server on the server:\n\n'
+cat "$key_file.pub"
