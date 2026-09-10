@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Install Herdr and the preferred command-line tools on Fedora.
+set -euo pipefail
+
+if [[ -r /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  source /etc/os-release
+fi
+
+[[ ${ID:-} == fedora ]] || {
+  printf 'This installer supports Fedora only; detected: %s.\n' "${PRETTY_NAME:-unknown}" >&2
+  exit 69
+}
+
+command -v dnf >/dev/null || {
+  printf 'dnf is required to install the Fedora packages.\n' >&2
+  exit 69
+}
+
+sudo dnf install -y curl zoxide eza fzf neovim nodejs npm
+curl -fsSL https://herdr.dev/install.sh | sh
+sudo npm install -g @openai/codex
+
+printf '\nInstalled: Herdr, zoxide, eza, fzf, Neovim, and Codex CLI.\n'
+printf 'Open a new shell, or follow Herdr\047s output if it asks you to add a directory to PATH.\n'
