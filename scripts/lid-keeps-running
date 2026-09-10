@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Keep a system running when its laptop lid is closed, or restore the default.
+set -euo pipefail
+
+config_dir=/etc/systemd/logind.conf.d
+config_file="$config_dir/90-lid-keeps-running.conf"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: lid-keeps-running <enable|disable|status>
+
+enable   Ignore lid-close events so the computer stays running. The built-in
+         laptop display normally turns off physically when the lid is closed.
+disable  Remove this override and restore the distribution's lid behavior.
+status   Show whether this script's override is installed.
+EOF
+  exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+
+command -v systemctl >/dev/null || {
+  printf 'systemctl is required to change lid behavior.\n' >&2
+  exit 69
+}
+
+case $1 in
+  enable)
+    sudo install -d -m 755 "$config_dir"
+    sudo tee "$config_file" >/dev/null <<'EOF'
+# Managed by lid-keeps-running. Remove this file to restore the default.
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+EOF
+    sudo systemctl restart systemd-logind
+    printf 'Lid close will no longer suspend or hibernate this computer.\n'
+    printf 'The built-in display should turn off normally when you close the lid.\n'
+    ;;
+  disable)
+    if [[ -e $config_file ]]; then
+      sudo rm "$config_file"
+      sudo systemctl restart systemd-logind
+      printf 'Restored the distribution default lid-close behavior.\n'
+    else
+      printf 'No lid-keeps-running override is installed.\n'
+    fi
+    ;;
+  status)
+    if [[ -e $config_file ]]; then
+      printf 'Enabled: %s\n' "$config_file"
+      sudo cat "$config_file"
+    else
+      printf 'Disabled: no %s override is installed.\n' "$config_file"
+    fi
+    ;;
+  *) usage ;;
+esac

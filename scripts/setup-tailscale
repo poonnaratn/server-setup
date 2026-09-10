@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Install and connect Tailscale on a Fedora server.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: setup-tailscale [tailscale-up-option ...]
+
+Installs Tailscale with Fedora's package manager, starts tailscaled, and runs
+"tailscale up". Any arguments are passed to "tailscale up"; for example:
+  setup-tailscale --ssh
+
+The command prints a sign-in URL unless an auth key is supplied as an option.
+EOF
+  exit 64
+}
+
+case ${1:-} in
+  -h|--help) usage ;;
+esac
+
+if [[ ! -r /etc/os-release ]]; then
+  printf 'Cannot identify the operating system: /etc/os-release is missing.\n' >&2
+  exit 69
+fi
+
+# shellcheck disable=SC1091
+source /etc/os-release
+if [[ ${ID:-} != fedora ]]; then
+  printf 'This setup script supports Fedora only; detected: %s.\n' "${PRETTY_NAME:-unknown}" >&2
+  exit 69
+fi
+
+command -v dnf >/dev/null || {
+  printf 'dnf is unavailable; cannot install Tailscale.\n' >&2
+  exit 69
+}
+
+sudo -v
+sudo dnf install -y tailscale
+sudo systemctl enable --now tailscaled
+
+printf '\nConnecting this server to Tailscale...\n'
+sudo tailscale up "$@"
+
+printf '\nConnected Tailscale addresses:\n'
+tailscale ip
+printf '\nStatus:\n'
+tailscale status

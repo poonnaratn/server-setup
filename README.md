@@ -96,3 +96,51 @@ local certificate. Log in with the Fedora account on the laptop. Allowing the
 `cockpit` firewall service makes it reachable from networks that can already
 reach the laptop; it does **not** create a router port-forward or make it
 publicly available by itself. Do not forward port 9090 through the router.
+
+## 4. Install Tailscale on the Fedora server
+
+Run this **on the Fedora server** after cloning the repository:
+
+```sh
+./scripts/setup-tailscale
+```
+
+It installs Tailscale, starts its service, and prints a sign-in URL. Open that
+URL in a browser and sign in to add the server to your tailnet. No firewall
+port needs to be opened for ordinary Tailscale connectivity.
+
+After sign-in, check the assigned addresses and connection state:
+
+```sh
+tailscale ip
+tailscale status
+```
+
+Options after the script name are passed through to `tailscale up`. For
+example, enable Tailscale SSH only when you intend to use it:
+
+```sh
+./scripts/setup-tailscale --ssh
+```
+
+## 5. Keep a laptop running with its lid closed
+
+If this Fedora laptop is acting as a server, run the following on the laptop
+to prevent a lid close from suspending or hibernating it:
+
+```sh
+./scripts/lid-keeps-running enable
+```
+
+The built-in display normally powers off physically when the lid is closed,
+while the system and network services keep running. To inspect the setting or
+restore Fedora's normal lid behavior later, run:
+
+```sh
+./scripts/lid-keeps-running status
+./scripts/lid-keeps-running disable
+```
+
+The script restarts `systemd-logind` after a change so the setting applies
+immediately. Save work before running it, and do not run the `enable` command
+if you depend on lid close as your normal suspend control.
