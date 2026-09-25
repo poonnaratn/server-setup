@@ -9,8 +9,9 @@ usage() {
   cat >&2 <<'EOF'
 Usage: lid-keeps-running <enable|disable|status>
 
-enable   Ignore lid-close events so the computer stays running. The built-in
-         laptop display normally turns off physically when the lid is closed.
+enable   Ignore lid-close events so the computer stays running. This does not
+         explicitly power off the internal panel; use clamshell-display-power
+         for that.
 disable  Remove this override and restore the distribution's lid behavior.
 status   Show whether this script's override is installed.
 EOF
@@ -36,7 +37,7 @@ HandleLidSwitchDocked=ignore
 EOF
     sudo systemctl restart systemd-logind
     printf 'Lid close will no longer suspend or hibernate this computer.\n'
-    printf 'The built-in display should turn off normally when you close the lid.\n'
+    printf 'Run clamshell-display-power enable to explicitly turn the internal panel off.\n'
     ;;
   disable)
     if [[ -e $config_file ]]; then

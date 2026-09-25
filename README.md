@@ -132,16 +132,29 @@ to prevent a lid close from suspending or hibernating it:
 ./scripts/lid-keeps-running enable
 ```
 
-The built-in display normally powers off physically when the lid is closed,
-while the system and network services keep running. To inspect the setting or
-restore Fedora's normal lid behavior later, run:
+This only changes suspend behavior; it does not explicitly command the
+internal panel or its backlight off. To turn the internal eDP panel off when
+the lid is closed and back on when it opens, enable the companion service:
+
+```sh
+sudo ./scripts/clamshell-display-power enable
+```
+
+It checks for `modetest` and installs Fedora's `drm-utils` package if needed.
+It runs without a graphical desktop session, polls the hardware lid state every
+five seconds, and directly applies DRM DPMS Off/On to the connected internal
+panel. It does not suspend the laptop or affect SSH/network services.
+
+To inspect or remove either setting later, run:
 
 ```sh
 ./scripts/lid-keeps-running status
-./scripts/lid-keeps-running disable
+sudo ./scripts/lid-keeps-running disable
+sudo ./scripts/clamshell-display-power status
+sudo ./scripts/clamshell-display-power disable
 ```
 
-The script restarts `systemd-logind` after a change so the setting applies
+The lid script restarts `systemd-logind` after a change so the setting applies
 immediately. Save work before running it, and do not run the `enable` command
 if you depend on lid close as your normal suspend control.
 

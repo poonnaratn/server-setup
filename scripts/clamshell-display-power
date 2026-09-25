@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# Explicitly power the internal DRM panel off while a server laptop's lid is shut.
+set -euo pipefail
+
+install_path=/usr/local/sbin/clamshell-display-power
+unit_path=/etc/systemd/system/clamshell-display-power.service
+state_dir=${STATE_DIR:-/run/clamshell-display-power}
+drm_root=${DRM_ROOT:-/sys/class/drm}
+lid_state_file=${LID_STATE_FILE:-}
+modetest_bin=${MODETEST_BIN:-modetest}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: clamshell-display-power <check|install-dependencies|apply|monitor|enable|disable|status>
+
+check                 Verify the system and required tools without changing anything.
+install-dependencies  Install drm-utils, which provides modetest.
+apply                 Set the internal display DPMS state for the current lid state.
+monitor               Run continuously; intended for the systemd service installed by enable.
+enable                Install dependencies, install this script and enable the lid monitor service.
+disable               Stop/remove the service and restore the internal panel to DPMS On.
+status                Show lid, service, connector, and dependency status.
+
+This controls the internal eDP panel directly through DRM. It does not suspend
+or shut down the computer. Use lid-keeps-running enable as well if the laptop
+must continue running with its lid closed.
+EOF
+  exit 64
+}
+
+require_root() {
+  if (( EUID != 0 )); then
+    printf 'This action needs root. Re-run with sudo.\n' >&2
+    exit 77
+  fi
+}
+
+lid_state() {
+  local f
+  if [[ -n $lid_state_file ]]; then
+    f=$lid_state_file
+  else
+    f=$(compgen -G '/proc/acpi/button/lid/*/state' | head -n 1 || true)
+  fi
+  [[ -n ${f:-} && -r $f ]] || { printf 'unknown\n'; return; }
+  if grep -q 'closed' "$f"; then printf 'closed\n'; else printf 'open\n'; fi
+}
+
+connector() {
+  local p
+  for p in "$drm_root"/card*-eDP-*; do
+    [[ -r $p/status && -r $p/connector_id ]] || continue
+    [[ $(<"$p/status") == connected ]] || continue
+    printf '%s\n' "$p"
+    return 0
+  done
+  return 1
+}
+
+driver_for() {
+  local path=$1 driver
+  driver=$(readlink -f "$path/device/driver" 2>/dev/null || true)
+  [[ -n $driver ]] || return 1
+  basename "$driver"
+}
+
+check_dependencies() {
+  local missing=0
+  if ! command -v "$modetest_bin" >/dev/null 2>&1; then
+    printf 'Dependency: modetest is missing (install package: drm-utils).\n'
+    missing=1
+  else
+    printf 'Dependency: modetest: %s\n' "$(command -v "$modetest_bin")"
+  fi
+  if ! command -v dnf >/dev/null 2>&1; then
+    printf 'Dependency installer: dnf is missing; install drm-utils using your package manager.\n'
+  else
+    printf 'Dependency installer: dnf is available.\n'
+  fi
+  return "$missing"
+}
+
+apply() {
+  local state path connector_id driver dpms
+  state=$(lid_state)
+  case $state in
+    closed) dpms=Off ;;
+    open) dpms=On ;;
+    *) printf 'Cannot determine lid state; leaving the display unchanged.\n' >&2; return 1 ;;
+  esac
+  path=$(connector) || { printf 'No connected internal eDP panel was found.\n' >&2; return 1; }
+  connector_id=$(<"$path/connector_id")
+  driver=$(driver_for "$path") || { printf 'Cannot identify the DRM driver for %s.\n' "$path" >&2; return 1; }
+  command -v "$modetest_bin" >/dev/null 2>&1 || {
+    printf 'modetest is required. Run: sudo %s install-dependencies\n' "$0" >&2
+    return 69
+  }
+  "$modetest_bin" -M "$driver" -w "$connector_id:DPMS:$dpms"
+  mkdir -p "$state_dir"
+  printf '%s\n' "$state" > "$state_dir/last-state"
+  printf 'Set %s to DPMS %s because the lid is %s.\n' "${path##*/}" "$dpms" "$state"
+}
+
+monitor() {
+  local previous='' current
+  mkdir -p "$state_dir"
+  [[ -r $state_dir/last-state ]] && previous=$(<"$state_dir/last-state")
+  while :; do
+    current=$(lid_state)
+    if [[ $current != "$previous" ]]; then
+      apply || true
+      previous=$current
+    fi
+    sleep 5
+  done
+}
+
+install_dependencies() {
+  require_root
+  command -v dnf >/dev/null 2>&1 || { printf 'dnf is required to install drm-utils automatically.\n' >&2; exit 69; }
+  dnf install -y drm-utils
+}
+
+enable() {
+  require_root
+  check_dependencies >/dev/null || install_dependencies
+  install -D -m 755 "$0" "$install_path"
+  cat > "$unit_path" <<EOF
+[Unit]
+Description=Power internal display off in clamshell mode
+After=systemd-logind.service
+
+[Service]
+Type=simple
+ExecStart=$install_path monitor
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now clamshell-display-power.service
+  "$install_path" apply
+  printf 'Enabled clamshell display power control.\n'
+}
+
+disable() {
+  require_root
+  systemctl disable --now clamshell-display-power.service 2>/dev/null || true
+  rm -f "$unit_path" "$install_path"
+  systemctl daemon-reload
+  apply || true
+  printf 'Disabled clamshell display power control and requested DPMS On.\n'
+}
+
+status() {
+  local path
+  printf 'Lid: %s\n' "$(lid_state)"
+  if path=$(connector); then
+    printf 'Internal panel: %s (connector ID %s)\n' "${path##*/}" "$(<"$path/connector_id")"
+    [[ -r $path/dpms ]] && printf 'Kernel DPMS report: %s\n' "$(<"$path/dpms")"
+  else
+    printf 'Internal panel: no connected eDP panel found.\n'
+  fi
+  check_dependencies || true
+  if command -v systemctl >/dev/null 2>&1; then
+    printf 'Service: %s\n' "$(systemctl is-active clamshell-display-power.service 2>/dev/null || true)"
+  fi
+}
+
+[[ $# -eq 1 ]] || usage
+case $1 in
+  check) check_dependencies; connector >/dev/null || { printf 'No connected internal eDP panel was found.\n' >&2; exit 1; }; printf 'Internal eDP panel detected.\n' ;;
+  install-dependencies) install_dependencies ;;
+  apply) apply ;;
+  monitor) monitor ;;
+  enable) enable ;;
+  disable) disable ;;
+  status) status ;;
+  *) usage ;;
+esac
